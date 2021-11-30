@@ -73,6 +73,7 @@ export const AboutMeetaiBotTab = () => {
                         <div>
                             <Header as="h2">Online meeting</Header>
                             <Button onClick={() => {
+                                setJoinUrl(undefined);
                                 axios.put("/_api/meetings", {}, { headers: { Authorization: `Bearer ${token}` } }).then(result => {
                                     if (result.status === 201) {
                                         setJoinUrl(result.headers.location);

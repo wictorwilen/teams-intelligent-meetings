@@ -41,7 +41,7 @@ export class SsoOauthPrompt extends OAuthPrompt {
 
             const result: TokenResponse = {
                 channelId: cachedTokenResponse.channelId,
-                connectionName: "AzureAD",
+                connectionName: process.env.SSO_CONNECTION_NAME as string,
                 token: cachedTokenResponse.token,
                 expiration: new Date(jwtDecode<any>(cachedTokenResponse.token).exp).toISOString()
             };

@@ -19,6 +19,7 @@ declare type Meeting = {
         incident: string;
     };
     activeParticipants: number;
+    conversationReference?: any;
 };
 
 // INFO: sorry - this is a hack!

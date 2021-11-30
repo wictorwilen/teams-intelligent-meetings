@@ -22,8 +22,9 @@ import AfterMeetingCard from "./cards/afterMeetingCard";
 import { SsoOAuthHelper } from "./SsoAuthHelper";
 import { Client } from "@microsoft/microsoft-graph-client";
 import { ChatMessage } from "@microsoft/microsoft-graph-types-beta";
-import { AzureKeyCredential, TextAnalyticsClient } from "@azure/ai-text-analytics";
+import { AzureKeyCredential, TextAnalyticsActions, TextAnalyticsClient } from "@azure/ai-text-analytics";
 import axios from "axios";
+import MeetingSummary from "./cards/meetingSummary";
 
 export const conversationReferences = new JsonDB(new Config("conversationRefs.db.json", true, false, "/"));
 
@@ -50,7 +51,11 @@ export class MeetaiBot extends DialogBot {
     constructor(conversationState: ConversationState, userState: UserState, private adapter: BotFrameworkAdapter) {
         super(conversationState, userState, new MainDialog());
         _adapter = adapter;
+
+        // Set up the SSO Helper for Bot SSO
         this._ssoOAuthHelper = new SsoOAuthHelper(process.env.SSO_CONNECTION_NAME as string, conversationState);
+
+        // Detect when members are added to the bot conversations
         this.onMembersAdded(async (context, next) => {
             const membersAdded = context.activity.membersAdded;
             if (membersAdded && context.activity.conversation && context.activity.conversation.id) {
@@ -60,6 +65,8 @@ export class MeetaiBot extends DialogBot {
                 if (meeting) {
                     log(chalk.greenBright("Existing meeting"));
                     await this.sendNewMeetingCard(context, incidents.find(i => i.id === meeting.data.incident));
+                    meeting.conversationReference = TurnContext.getConversationReference(context.activity);
+                    meetings.update(meeting);
                 } else {
                     log(chalk.greenBright("Unknown meeting"));
                 }
@@ -73,6 +80,7 @@ export class MeetaiBot extends DialogBot {
             await next();
         });
 
+        // For all conversations we need to store the conversation reference so we can send proactive messages
         this.onConversationUpdate(async (context, next) => {
             if (context.activity && context.activity) {
                 if (context.activity.conversation.conversationType === "personal") {
@@ -86,16 +94,13 @@ export class MeetaiBot extends DialogBot {
     }
 
     // https://docs.microsoft.com/en-us/adaptive-cards/authoring-cards/universal-action-model
+    // This is called when a universal action is invoked on a card
     public async onAdaptiveCardInvoke(context: TurnContext, invokeValue: AdaptiveCardInvokeValue): Promise<AdaptiveCardInvokeResponse> {
         if (invokeValue.action.verb === "generateSummary") {
             log("Generate summary");
-            // https://blog.aterentiev.com/ms-graph-get-driveitem-by-file-absolute
-            // https://graph.microsoft.com/beta/shares/u!aHR0cHM6Ly93aWN0b3JkZXYtbXkuc2hhcmVwb2ludC5jb20vOnY6L2cvcGVyc29uYWwvd193aWxlbl93aWN0b3JkZXZfb25taWNyb3NvZnRfY29tL0VZRnllSkVfRWtOQ2tpeUlTTkNTbzljQnFac014WmJ6LUdRcXpGZ0ZacDZFSlE_ZW1haWw9dy53aWxlbiU0MHdpY3RvcmRldi5vbm1pY3Jvc29mdC5jb20/driveItem
-            // .downloadUrl -> AZ Cog svcs
-            // https://docs.microsoft.com/en-us/azure/media-services/latest/analyze-videos-tutorial
-            // --> https://docs.microsoft.com/en-us/azure/media-services/latest/job-input-from-http-how-to
             try {
-                const token = await this.adapter.getAadTokens(context, "AzureAD", ["https://graph.microsoft.com"]);
+                // Get token to graph from the bot
+                const token = await this.adapter.getAadTokens(context, process.env.SSO_CONNECTION_NAME as string, ["https://graph.microsoft.com"]);
                 const client = Client.init({
                     authProvider: (cb) => {
                         cb(null, token["https://graph.microsoft.com"].token);
@@ -125,6 +130,8 @@ export class MeetaiBot extends DialogBot {
                     .reverse();
 
                 log(chalk.yellow(texts));
+
+                // if we have chat messages then calculate the sentiment
                 if (texts.length > 0) {
                     // pass to cognitive services
                     const textClient = new TextAnalyticsClient(process.env.AZ_COG_ENDPOINT as string, new AzureKeyCredential(process.env.AZ_COG_KEY as string));
@@ -148,7 +155,6 @@ export class MeetaiBot extends DialogBot {
                             _adapter.continueConversation(ref, async (ctx) => {
                                 await ctx.sendActivity("Meeting chat was in general neutral 😐");
                             });
-
                         } else {
                             log("negative");
                             _adapter.continueConversation(ref, async (ctx) => {
@@ -160,7 +166,7 @@ export class MeetaiBot extends DialogBot {
                 // find the transcript
                 const transcript = messages
                     .filter(m => m.messageType === "systemEventMessage").pop();
-                // TOOD:
+                // TOOD: implement this later
 
                 // get the video download url
                 const video = messages
@@ -217,8 +223,12 @@ export class MeetaiBot extends DialogBot {
                                                 await ctx.sendActivity(`The meeting had a ${(r[0] as any).sentiment} vibe`);
                                             });
                                         });
-                                        const actions = {
-                                            extractSummaryActions: [{ modelVersion: "latest", orderBy: "Rank", maxSentenceCount: 3 }]
+                                        // configure the actions we want to analyze out of the text
+                                        const actions: TextAnalyticsActions = {
+                                            extractSummaryActions: [{ modelVersion: "latest", orderBy: "Rank", maxSentenceCount: 3 }],
+                                            extractKeyPhrasesActions: [{ modelVersion: "latest" }],
+                                            analyzeSentimentActions: [{ includeOpinionMining: true, modelVersion: "latest" }],
+                                            recognizeEntitiesActions: [{ modelVersion: "latest" }]
                                         };
                                         const poller = await textClient.beginAnalyzeActions([result.text], actions, "en");
                                         poller.onProgress(() => {
@@ -233,17 +243,17 @@ export class MeetaiBot extends DialogBot {
                                             if (!extractSummaryAction.error) {
                                                 for (const doc of extractSummaryAction.results) {
                                                     if (!doc.error) {
-                                                        let message = "**Meeting summary:**\n\n";
+                                                        let message = "";
                                                         for (const sentence of doc.sentences) {
                                                             message += "- " + sentence.text + "\n";
                                                         }
-                                                        _adapter.continueConversation(ref, async (ctx) => {
-                                                            await ctx.sendActivity({ text: message, textFormat: "markdown" });
-                                                        });
+                                                        this.sendMeetingSummaryToOrganizer(ref, incidents.find(i => i.id === meeting.data.incident), meeting.id!, message);
                                                     } else {
                                                         log("\tError:" + doc.error);
                                                     }
                                                 }
+                                            } else {
+                                                log(chalk.red(extractSummaryAction.error));
                                             }
                                         }
                                     });
@@ -261,13 +271,6 @@ export class MeetaiBot extends DialogBot {
                     });
                 }
                 if (video || transcript || texts) {
-                    // start transcription of video
-                    // const ctx = new media.AzureMediaServicesContext(creds, sub);
-                    // const x = new media.Jobs(ctx);
-                    // x.create(rg, acnt, transform, name, {
-                    //     input:
-                    // });
-                    // media.Jobs
                     return {
                         statusCode: 200,
                         type: "application/vnd.microsoft.activity.message",
@@ -289,26 +292,58 @@ export class MeetaiBot extends DialogBot {
                 } as any;
 
             }
+        }
+        if (invokeValue.action.verb === "sendSummary") {
+            const meeting = meetings.getById(invokeValue.action.data.id as string);
+            if (meeting === undefined) {
+                return {
+                    statusCode: 200,
+                    type: "application/vnd.microsoft.activity.message",
+                    value: "Meeting not found!"
+                } as any;
+            }
 
+            const ref = meeting.conversationReference as Partial<ConversationReference>;
+            _adapter.continueConversation(ref, async (context) => {
+                await context.sendActivity({ text: "**Meeting summary**\n" + invokeValue.action.data.comments, textFormat: "markdown" });
+            });
+
+            return {
+                statusCode: 200,
+                type: "application/vnd.microsoft.activity.message",
+                value: "Meeting summary sent ✔️"
+            } as any;
         }
         return {
             statusCode: 400,
             type: "application/vnd.microsoft.error",
             value: { message: "Invalid verb" }
         } as any;
-
     };
 
+    /**
+     * Sends the welcome card to a chat
+     */
     public async sendWelcomeCard(context: TurnContext): Promise<void> {
         const welcomeCard = CardFactory.adaptiveCard(WelcomeCard);
         await context.sendActivity({ attachments: [welcomeCard] });
     }
 
+    /**
+     * Sends the card when invited to a meeting
+     * @param context -
+     * @param data meeting data
+     */
     public async sendNewMeetingCard(context: TurnContext, data: any): Promise<void> {
         const card = CardFactory.adaptiveCard(NewMeetingCard(data));
         await context.sendActivity({ attachments: [card] });
     }
 
+    /**
+     * Sends a card to a user after a meeting
+     * @param id user id
+     * @param meetingId meeting id
+     */
     public static async sendAfterMeetingCard(id: string, meetingId: string): Promise<void> {
         if (conversationReferences.exists(`/${id}`)) {
             const ref = conversationReferences.getData(`/${id}`) as Partial<ConversationReference>;
@@ -320,6 +355,18 @@ export class MeetaiBot extends DialogBot {
     }
 
     /**
+     * 
+     * @param ref Conversation reference
+     * @param summary Summary
+     */
+    public async sendMeetingSummaryToOrganizer(ref: Partial<ConversationReference>, meeting: any, meetingId: string, summary: string) {
+        _adapter.continueConversation(ref, async (context) => {
+            const card = CardFactory.adaptiveCard(MeetingSummary({ ...meeting, meetingId, summary }));
+            await context.sendActivity({ attachments: [card] });
+        });
+    }
+
+    /**
      * Webhook for incoming calls
      */
     @BotCallingWebhook("/api/calling")
@@ -327,10 +374,8 @@ export class MeetaiBot extends DialogBot {
         callingHandler(req, res);
     }
 
-    public async sendOnlineMeetingStartMessage(chatInfo: any): Promise<void> {
 
-    }
-
+    // SSO handling
     public async handleTeamsSigninTokenExchange(context: TurnContext, query: SigninStateVerificationQuery): Promise<void> {
         log("handleTeamsSigninTokenExchange");
         if (await this._ssoOAuthHelper.shouldProcessTokenExchange(context)) {
@@ -340,6 +385,7 @@ export class MeetaiBot extends DialogBot {
         }
     }
 
+    // SSO handling
     public async handleTeamsSigninVerifyState(context: TurnContext, query: SigninStateVerificationQuery): Promise<void> {
         await this.dialog.run(context, this.dialogState);
     }

@@ -9,7 +9,12 @@ import { Config } from "node-json-db/dist/lib/JsonDBConfig";
 
 const log = debug("msteams");
 
+// tenantsDb contains all the tenants using the app
 export const tenantsDb = new JsonDB(new Config("tenants.db.json", true, false, "/"));
+
+/**
+ * API endpoint used for redirect uri for the bot
+ */
 export const consentBot = way<{ id: string }, any, any, { admin_consent: string, tenant: string }>("get", "/consent/bot", (req, res, next) => {
     log(req.url);
     if (req.query.admin_consent === "True") {
@@ -30,6 +35,9 @@ export const consentBot = way<{ id: string }, any, any, { admin_consent: string,
     }
 });
 
+/**
+ * API endpoint used for redirect uri for the tab
+ */
 export const consentTab = way<{ id: string }, any, any, { admin_consent: string, tenant: string }>("get", "/consent/tab", (req, res, next) => {
     log(req.url);
     if (req.query.admin_consent === "True") {

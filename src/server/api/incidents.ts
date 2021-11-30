@@ -7,10 +7,16 @@ import * as incidents from "../incidents.json";
 
 const log = debug("msteams");
 
+/**
+ * Returns all incidents
+ */
 export const consentBot = way<never, never, any>("get", "/incidents", (req, res, next) => {
     res.send(incidents);
 });
 
+/**
+ * Returns a specific incident
+ */
 export const consentTab = way<{ id: string }, never, any>("get", "/incidents/:id", (req, res, next) => {
     const incident = incidents.filter(i => i.id === req.params.id);
     if (incident && incident.length === 1) {

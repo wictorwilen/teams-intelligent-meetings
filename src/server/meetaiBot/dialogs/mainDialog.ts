@@ -30,14 +30,17 @@ const CONFIRM_PROMPT = "ConfirmPrompt";
 export class MainDialog extends LogoutDialog {
     public onboarding: boolean;
     constructor() {
-        super(MAIN_DIALOG_ID, "AzureAD");
+        super(MAIN_DIALOG_ID, process.env.SSO_CONNECTION_NAME as string);
+
+        // add the SSO dialog
         this.addDialog(new SsoOauthPrompt(OAUTH_PROMPT, {
-            connectionName: "AzureAD",
+            connectionName: process.env.SSO_CONNECTION_NAME as string,
             text: "Please Sign In",
             title: "Sign In",
             timeout: 300000
         }));
 
+        // add the normal dialogs
         this.addDialog(new TextPrompt("TextPrompt"))
             .addDialog(new TeamsInfoDialog())
             .addDialog(new HelpDialog())
@@ -53,6 +56,11 @@ export class MainDialog extends LogoutDialog {
         this.onboarding = false;
     }
 
+    /**
+     * Main bot loop
+     * @param context -
+     * @param accessor -
+     */
     public async run(context: TurnContext, accessor: StatePropertyAccessor<DialogState>) {
         const dialogSet = new DialogSet(accessor);
         dialogSet.add(this);
@@ -123,6 +131,7 @@ export class MainDialog extends LogoutDialog {
         return await stepContext.replaceDialog(this.initialDialogId, { restartMsg: "What else can I do for you?" });
     }
 
+    // SSO step
     async promptStep(stepContext) {
         try {
             return await stepContext.beginDialog(OAUTH_PROMPT);
@@ -132,6 +141,7 @@ export class MainDialog extends LogoutDialog {
         return await stepContext.endDialog();
     }
 
+    // After SSO step
     async loginStep(stepContext) {
         // Get the token from the previous step. Note that we could also have gotten the
         // token directly from the prompt itself. There is an example of this in the next method.

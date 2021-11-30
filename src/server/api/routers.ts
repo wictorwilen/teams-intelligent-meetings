@@ -14,6 +14,11 @@ import * as Incidents from "../incidents.json";
 
 const log = debug("msteams");
 
+/**
+ * Generates a random string
+ * @param length length
+ * @returns a random string
+ */
 const random = (length = 8) => {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -25,6 +30,9 @@ const random = (length = 8) => {
     return str;
 };
 
+/**
+ * Helper class to log the tokens
+ */
 class XTokenCredentialAuthenticationProvider extends TokenCredentialAuthenticationProvider {
     public async getAccessToken(): Promise<string> {
         const token = await super.getAccessToken();
@@ -33,6 +41,12 @@ class XTokenCredentialAuthenticationProvider extends TokenCredentialAuthenticati
     }
 }
 
+/**
+ * Returns the MS Graph client for a tenant
+ * @param tid tenant id
+ * @param scopes requested scopes
+ * @returns A Microsoft Graph client
+ */
 export const getGraphClient = (tid: string, scopes: string[]) => {
     const credential = new ClientSecretCredential(tid, process.env.MICROSOFT_APP_ID as string, process.env.MICROSOFT_APP_PASSWORD as string);
     const authProvider = new XTokenCredentialAuthenticationProvider(credential, { scopes });
@@ -48,24 +62,27 @@ export const getGraphClient = (tid: string, scopes: string[]) => {
  * Creates a new Online meeting.
  * Users have to manually join using the Join URL
  */
-export const get1 = way("put", "/meetings", async (req: express.Request, res, next) => {
+export const meetingsPut = way("put", "/meetings", async (req: express.Request, res, next) => {
     const d = new Date();
     const d2 = new Date();
     d2.setHours(d.getHours() + 1);
+
+    // Get an incident (random)
     const incident = Incidents[Math.floor(Math.random() * Incidents.length)];
+
+    // Create the OnlineMeeting
     const body: MicrosoftGraphBeta.OnlineMeeting = {
         startDateTime: d.toISOString(),
         endDateTime: d2.toISOString(),
         subject: `❗Incident: '${incident.title} for ${incident.company}`,
         externalId: "incident-" + incident.id + "-" + random(4), // use this to reuse meetings
-        recordAutomatically: true,
+        recordAutomatically: true, // INFO: does not work as expected
         isEntryExitAnnounced: true,
         participants: {
             organizer: {
                 identity: {
-                    application: {
-                        id: process.env.MICROSOFT_APP_ID,
-                        displayName: "meet.ai"
+                    user: {
+                        id: (req.user as any).id
                     }
                 }
             },
@@ -76,22 +93,33 @@ export const get1 = way("put", "/meetings", async (req: express.Request, res, ne
                             id: (req.user as any).id
                         }
                     }
+                },
+                {
+                    identity: {
+                        application: {
+                            id: process.env.MICROSOFT_APP_ID,
+                            displayName: "meet.ai"
+                        }
+                    }
                 }
             ]
         }
     };
 
-    // Create the online meeting with an external id
+    // get the graph client
     const client = getGraphClient((req.user as any)?.tid, ["https://graph.microsoft.com/.default"]);
+
+    // Create the online meeting with an external id
     client.api(`/users/${(req.user as any).id}/onlineMeetings/createOrGet`).version("beta").post(body).then(async (result: MicrosoftGraphBeta.OnlineMeeting) => {
         if (!result) {
             throw new Error("No result");
         }
 
-        // return the join URL
+        // return the join URL - which will be presented in the UI
         res.status(201).header("location", result.joinUrl!).send("Created");
 
-        // register the meeting
+        // register the meeting in our local database
+        // needed to be able to correlate threadId <-> meeting id <-> incident id
         Meetings.add({
             id: undefined,
             threadId: result.chatInfo?.threadId as string,
@@ -103,11 +131,13 @@ export const get1 = way("put", "/meetings", async (req: express.Request, res, ne
         });
 
         // get the "real" app id
+        // this was stored when the tab app was consented in our local database
         const tid = (req.user as any)?.tid;
         const teamsAppId = tenantsDb.getData(`/${tid}/teamsAppId`);
+        log(`App id: ${teamsAppId}`);
 
         // Install the app to the meeting
-        log(`App id: ${teamsAppId}`);
+        // INFO: this does not handle the scenario when the app is already installed
         client.api(`/chats/${result.chatInfo!.threadId}/installedApps`)
             .version("beta")
             .post({
@@ -115,13 +145,15 @@ export const get1 = way("put", "/meetings", async (req: express.Request, res, ne
             })
             .then(res => {
                 log("Success");
-                // Join the bot to the call
+
+                // Create the call update object
                 const call = {
                     "@odata.type": "#microsoft.graph.call",
                     callbackUri: `https://${process.env.PUBLIC_HOSTNAME}/api/calling`,
                     requestedModalities: [
                         "audio"
                     ],
+                    recordingAutomatically: true,
                     mediaConfig: {
                         "@odata.type": "#microsoft.graph.serviceHostedMediaConfig",
                         preFetchMedia: [
@@ -155,6 +187,8 @@ export const get1 = way("put", "/meetings", async (req: express.Request, res, ne
                     },
                     tenantId: (req.user as any)?.tid // REQUIRED
                 };
+
+                // Update the call
                 client
                     .api("/communications/calls")
                     .version("beta")
@@ -162,7 +196,7 @@ export const get1 = way("put", "/meetings", async (req: express.Request, res, ne
                     .then(callResult => {
                         log("Calling bot worked as expected");
 
-                        // Add the tab
+                        // Add the tab to the meeting
                         client.api(`/chats/${result.chatInfo!.threadId}/tabs`)
                             .version("beta")
                             .post({
@@ -210,7 +244,10 @@ export const get1 = way("put", "/meetings", async (req: express.Request, res, ne
     });
 });
 
-export const call = way("put", "/calls", (req: express.Request, res, next) => {
+/**
+ * Creates a direct call between users and the bot
+ */
+export const callsPut = way("put", "/calls", (req: express.Request, res, next) => {
 
     const body: MicrosoftGraphBeta.Call = {
         callbackUri: `https://${process.env.PUBLIC_HOSTNAME}/api/calling`,
@@ -285,6 +322,9 @@ export const call = way("put", "/calls", (req: express.Request, res, next) => {
     });
 });
 
+/**
+ * Returns the teams app id
+ */
 export const teamsAppId = way<any, { id: string }>("post", "/teamsapp/id", (req: express.Request, res, next) => {
     const tid = (req.user as any)?.tid;
     const id = req.body.id;

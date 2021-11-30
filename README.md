@@ -43,6 +43,7 @@ Teams meeting and calling demo
 **Redirect URIs**
 
 - https://YOUR-URL/_api/consent/tab
+- https://token.botframework.com/.auth/web/redirect
 
 **Application ID URI**
 

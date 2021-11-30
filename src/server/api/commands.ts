@@ -2,6 +2,12 @@ import chalk = require("chalk");
 import { log } from "debug";
 import { getGraphClient } from "./routers";
 
+/**
+ * Leave a call
+ * @param tid tenant id
+ * @param callId call id
+ * @returns void
+ */
 export const leaveCall = (tid: string, callId: string): Promise<void> => {
     return new Promise((resolve, reject) => {
         const client = getGraphClient(tid, ["https://graph.microsoft.com/.default"]);

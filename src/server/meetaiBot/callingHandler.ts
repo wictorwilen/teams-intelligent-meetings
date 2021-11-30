@@ -23,6 +23,10 @@ type JwtKeys = {
     }>;
 };
 
+/**
+ * Fetches the keys from Azure AD
+ * @returns the JWT keys
+ */
 const loadAzureADKeys = (): Promise<JwtKeys> => {
     return new Promise<any>((resolve, reject) => {
         axios.get("https://login.botframework.com/v1/.well-known/openidconfiguration").then(openidconfig => {
@@ -36,6 +40,7 @@ const loadAzureADKeys = (): Promise<JwtKeys> => {
         });
     });
 };
+
 let botFxKeys: JwtKeys;
 loadAzureADKeys().then(r => { botFxKeys = r; });
 
@@ -89,6 +94,7 @@ const validateRequest = (req: express.Request): number => {
 export default (req: express.Request, res: express.Response) => {
     log("Incoming call");
 
+    // Validate the request
     const validation = validateRequest(req);
     if (validation !== 0) {
         res.status(validation).send();
@@ -97,14 +103,19 @@ export default (req: express.Request, res: express.Response) => {
 
     const incoming: MicrosoftGraphBeta.CommsNotifications = req.body;
     let retval = 200;
+
+    // Process the incoming request
     if (incoming && incoming.value) {
         incoming.value.forEach(async (incomingCall: MicrosoftGraphBeta.CommsNotification) => { // NOTE: there can be many call notifications
             log(incomingCall.changeType);
+
             if (incomingCall.resourceUrl) {
+                // Extract details from the resourceUrl
                 const meetingId = incomingCall.resourceUrl.split("/")[3]; // "resourceUrl": "/communications/calls/f31f5b00-b724-4c34-960c-3176607fd717/participants",
                 const resourceData = (incomingCall as any).resourceData as MicrosoftGraphBeta.Call;
                 const id = resourceData?.chatInfo?.threadId;
 
+                // Check if we're managing this meeting
                 let meeting = meetings.getById(meetingId);
                 if (!meeting && id) {
                     meeting = meetings.getByThreadId(id);
@@ -141,7 +152,7 @@ export default (req: express.Request, res: express.Response) => {
                             // These notifications are about ops on participants (mute, join etc)
                             if (incomingCall.resourceUrl?.endsWith("/participants")) {
 
-                                // update participants
+                                // update participants in our local database
                                 (resourceData as MicrosoftGraphBeta.Participant[]).forEach(p => {
                                     meetings.updateParticipant(meeting!, p);
                                 });
@@ -193,8 +204,6 @@ export default (req: express.Request, res: express.Response) => {
 
                                 // TODO: check for mute/unmute
 
-                                // TODO: check if the bot is the only remaining participant - if so, close the call after a few minutes
-
                             } else if (incomingCall.resourceUrl?.endsWith("/operations")) {
                                 // ignore here
                                 retval = 200;
@@ -209,7 +218,6 @@ export default (req: express.Request, res: express.Response) => {
                                         // Do after join meeting stuff
                                         break;
                                 }
-
                             }
                             break;
                         default:

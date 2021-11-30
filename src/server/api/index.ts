@@ -8,6 +8,9 @@ import * as incidents from "./incidents";
 import * as publicRoutes from "./public";
 const log = debug("msteams");
 
+/**
+ * Sets up default APIs
+ */
 export default (): express.Router => {
     const router = express.Router();
 
