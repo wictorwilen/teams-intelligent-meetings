@@ -1,0 +1,40 @@
+{
+  "type": "AdaptiveCard",
+  "body": [
+    {
+      "type": "TextBlock",
+      "size": "Medium",
+      "weight": "Bolder",
+      "text": "${title}",
+      "wrap": true,
+      "style": "heading"
+    },
+    {
+      "type": "TextBlock",
+      "weight": "Bolder",
+      "text": "${company}",
+      "wrap": true
+    },
+    {
+      "type": "TextBlock",
+      "spacing": "None",
+      "text": "Created ${created}",
+      "isSubtle": true,
+      "wrap": true
+    },
+    {
+      "type": "TextBlock",
+      "text": "${description}",
+      "wrap": true
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.OpenUrl",
+      "title": "Open CRM",
+      "url": "https://www.wictorwilen.se"
+    }
+  ],
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.5"
+}

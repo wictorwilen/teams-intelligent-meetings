@@ -1,0 +1,12 @@
+{
+  "generator-teams": {
+    "promptValues": {
+      "developer": "Wictor Wilén",
+      "unitTestsEnabled": false,
+      "lintingSupport": true,
+      "useAzureAppInsights": true
+    },
+    "libraryName": "meetai",
+    "generator-version": "3.5.0"
+  }
+}

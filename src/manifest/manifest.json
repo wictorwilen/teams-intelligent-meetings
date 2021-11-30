@@ -1,0 +1,107 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.11/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.11",
+  "id": "{{APPLICATION_ID}}",
+  "version": "{{VERSION}}",
+  "packageName": "{{PACKAGE_NAME}}",
+  "developer": {
+    "name": "Wictor Wilén",
+    "websiteUrl": "https://{{PUBLIC_HOSTNAME}}",
+    "privacyUrl": "https://{{PUBLIC_HOSTNAME}}/privacy.html",
+    "termsOfUseUrl": "https://{{PUBLIC_HOSTNAME}}/tou.html"
+  },
+  "name": {
+    "short": "meetai",
+    "full": "meetai"
+  },
+  "description": {
+    "short": "TODO: add short description here",
+    "full": "TODO: add full description here"
+  },
+  "icons": {
+    "outline": "icon-outline.png",
+    "color": "icon-color.png"
+  },
+  "accentColor": "#863558",
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://{{PUBLIC_HOSTNAME}}/meetAiTab/config.html?name={loginHint}&tenant={tid}&group={groupId}&theme={theme}",
+      "canUpdateConfiguration": true,
+      "scopes": [
+        "team",
+        "groupchat"
+      ],
+      "context":[
+        "channelTab",
+        "privateChatTab",
+        "meetingChatTab",
+        "meetingDetailsTab",
+        "meetingSidePanel",
+        "meetingStage"
+     ]
+    }
+  ],
+  "staticTabs": [
+    {
+      "entityId": "18a64de0-4931-11ec-9702-972ebd5b5c7b",
+      "name": "Admin",
+      "contentUrl": "https://{{PUBLIC_HOSTNAME}}/meetaiBot/aboutMeetaiBot.html",
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
+  "bots": [
+    {
+      "botId": "{{MICROSOFT_APP_ID}}",
+      "needsChannelSelector": true,
+      "isNotificationOnly": false,
+      "scopes": [
+        "team",
+        "personal",
+        "groupchat"
+      ],
+      "commandLists": [
+        {
+          "scopes": [
+            "team",
+            "personal"
+          ],
+          "commands": [
+            {
+              "title": "Help",
+              "description": "Shows help information"
+            },
+            {
+              "title": "Who am I?",
+              "description": "Shows information about your Teams user"
+            },
+            {
+              "title": "Mention me",
+              "description": "Let the bot @mention you"
+            }
+          ]
+        }
+      ],
+      "supportsCalling": true,
+      "supportsVideo": true
+    }
+  ],
+  "connectors": [],
+  "composeExtensions": [],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "{{PUBLIC_HOSTNAME}}",
+    "login.microsoftonline.com",
+    "token.botframework.com"
+  ],
+  "showLoadingIndicator": false,
+  "isFullScreen": false,
+  "webApplicationInfo": {
+    "id": "{{TAB_APP_ID}}",
+    "resource": "{{TAB_APP_URI}}"
+  }
+}
