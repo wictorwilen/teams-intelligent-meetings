@@ -26,6 +26,9 @@ import { AzureKeyCredential, TextAnalyticsActions, TextAnalyticsClient } from "@
 import axios from "axios";
 import MeetingSummary from "./cards/meetingSummary";
 
+import * as stream from "stream";
+import { promisify } from "util";
+
 export const conversationReferences = new JsonDB(new Config("conversationRefs.db.json", true, false, "/"));
 
 // Initialize debug logging module
@@ -33,6 +36,19 @@ const log = debug("msteams");
 
 // store the adapter globally
 let _adapter: BotFrameworkAdapter;
+
+const finished = promisify(stream.finished);
+export async function downloadFile(fileUrl: string, outputLocationPath: string): Promise<any> {
+    const writer = fs.createWriteStream(outputLocationPath);
+    return axios({
+        method: "get",
+        url: fileUrl,
+        responseType: "stream",
+    }).then(async response => {
+        response.data.pipe(writer);
+        return await finished(writer);
+    });
+}
 
 /**
  * Implementation for meetai Bot
@@ -125,7 +141,7 @@ export class MeetaiBot extends DialogBot {
                 // get all chat messages
                 const texts = messages
                     .filter(m => m.messageType === "message" && m.body && m.body.content)
-                    .map(m => stripHtml(m.body!.content as string).result)
+                    .map(m => stripHtml(m.body!.content as string).result.replace("\n", " "))
                     .filter(t => t.length !== 0)
                     .reverse();
 
@@ -135,7 +151,8 @@ export class MeetaiBot extends DialogBot {
                 if (texts.length > 0) {
                     // pass to cognitive services
                     const textClient = new TextAnalyticsClient(process.env.AZ_COG_ENDPOINT as string, new AzureKeyCredential(process.env.AZ_COG_KEY as string));
-                    textClient.analyzeSentiment(texts).then(results => {
+                    // INFO: sentiment analysis is only for 10 items at a time -> implement multiple calls...
+                    textClient.analyzeSentiment(texts.slice(0, 10)).then(results => {
                         // log(results);
                         let positive = 0; let neutral = 0; let negative = 0;
                         results.forEach((r: any) => {
@@ -161,6 +178,8 @@ export class MeetaiBot extends DialogBot {
                                 await ctx.sendActivity("Meeting chat was in general negative ☹️");
                             });
                         }
+                    }).catch(err => {
+                        log(chalk.red(`Error analyzing chat sentiment: ${err.message}`));
                     });
                 }
                 // find the transcript
@@ -185,18 +204,24 @@ export class MeetaiBot extends DialogBot {
                     const base64 = buff.toString("base64");
                     const encodedUrl = "u!" + base64.replace("/", "_").replace("+", "-").substr(0, base64.length - 1); // remove trailing =
 
+                    // delete old files
+                    try {
+                        fs.rmSync(path.resolve(__dirname, "audio.wav"));
+                        fs.rmSync(path.resolve(__dirname, "temp.mp4"));
+                    } catch (err) {
+                        // nop
+                    };
+
                     // Get the driveItem from Graph
                     client.api(`/shares/${encodedUrl}/driveItem`).version("beta").get().then(r => {
                         log(chalk.cyan(`Anonymous download url: ${r["@microsoft.graph.downloadUrl"]}`));
 
                         // Download the file locally
-                        axios.get(r["@microsoft.graph.downloadUrl"], { responseType: "stream" }).then(blob => {
-                            const downloadPath = path.resolve(__dirname, "temp.mp4");
-                            const writer = fs.createWriteStream(downloadPath);
-                            blob.data.pipe(writer);
-
-                            writer.on("finish", () => {
-                                log("file is written");
+                        downloadFile(
+                            r["@microsoft.graph.downloadUrl"],
+                            path.resolve(__dirname, "temp.mp4"))
+                            .then(() => {
+                                log("Video file is written");
 
                                 // Use ffmpeg to extract audio
                                 const command = ffmpeg();
@@ -209,6 +234,7 @@ export class MeetaiBot extends DialogBot {
 
                                     // Use Azure Speach to text to get the transcript
                                     const speechConfig = cog.SpeechConfig.fromSubscription(process.env.AZ_SPEECH_KEY as string, process.env.AZ_SPEECH_REGION as string);
+                                    speechConfig.speechRecognitionLanguage = "en-US";
                                     const audioConfig = cog.AudioConfig.fromWavFileInput(fs.readFileSync(path.resolve(__dirname, "audio.wav")));
                                     const recognizer = new cog.SpeechRecognizer(speechConfig, audioConfig);
 
@@ -222,7 +248,10 @@ export class MeetaiBot extends DialogBot {
                                             _adapter.continueConversation(ref, async (ctx) => {
                                                 await ctx.sendActivity(`The meeting had a ${(r[0] as any).sentiment} vibe`);
                                             });
+                                        }).catch(err => {
+                                            log(chalk.red(err));
                                         });
+
                                         // configure the actions we want to analyze out of the text
                                         const actions: TextAnalyticsActions = {
                                             extractSummaryActions: [{ modelVersion: "latest", orderBy: "Rank", maxSentenceCount: 3 }],
@@ -259,15 +288,18 @@ export class MeetaiBot extends DialogBot {
                                     });
                                 });
 
-                                command.input(downloadPath);
-                                command.audioChannels(2);
+                                // set up ffmpeg to extract audio
+                                command.input(path.resolve(__dirname, "temp.mp4"));
+                                command.audioChannels(1);
+                                // command.outputOptions(["-ss", "0", "-t", "180"]); // only take the first minute
+                                // command.audioCodec("pcm_u8");
+                                // command.audioQuality(12);
                                 command.format("wav");
                                 command.save(path.resolve(__dirname, "audio.wav"));
+                            })
+                            .catch(err => {
+                                log(chalk.red(`Unable to download file: ${err.message}`));
                             });
-                            writer.on("error", () => {
-                                log("Failed to write file");
-                            });
-                        });
                     });
                 }
                 if (video || transcript || texts) {
