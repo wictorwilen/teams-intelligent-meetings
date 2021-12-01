@@ -236,15 +236,29 @@ export class MeetaiBot extends DialogBot {
                                     const speechConfig = cog.SpeechConfig.fromSubscription(process.env.AZ_SPEECH_KEY as string, process.env.AZ_SPEECH_REGION as string);
                                     speechConfig.speechRecognitionLanguage = "en-US";
                                     const audioConfig = cog.AudioConfig.fromWavFileInput(fs.readFileSync(path.resolve(__dirname, "audio.wav")));
+
                                     const recognizer = new cog.SpeechRecognizer(speechConfig, audioConfig);
 
-                                    recognizer.recognizeOnceAsync(async (result) => {
-                                        log(`RECOGNIZED: Text=${result.text}`);
-                                        recognizer.close();
+                                    // add some custom phrases
+                                    const phraseList = cog.PhraseListGrammar.fromRecognizer(recognizer);
+                                    phraseList.addPhrase("yo teams");
+                                    phraseList.addPhrase("Microsoft Teams");
+                                    phraseList.addPhrase("SDK");
+                                    phraseList.addPhrase("AI");
+                                    phraseList.addPhrase("GA");
+
+                                    let text = "";
+
+                                    recognizer.canceled = (reco, e) => {
+                                        log("Recognition canceled");
+                                    };
+
+                                    recognizer.speechEndDetected = async (reco, e) => {
+                                        log("Speech end detected");
 
                                         // do some funky stuff with this text
                                         const textClient = new TextAnalyticsClient(process.env.AZ_COG_ENDPOINT as string, new AzureKeyCredential(process.env.AZ_COG_KEY as string));
-                                        textClient.analyzeSentiment([result.text]).then(r => {
+                                        textClient.analyzeSentiment([text]).then(r => {
                                             _adapter.continueConversation(ref, async (ctx) => {
                                                 await ctx.sendActivity(`The meeting had a ${(r[0] as any).sentiment} vibe`);
                                             });
@@ -259,7 +273,7 @@ export class MeetaiBot extends DialogBot {
                                             analyzeSentimentActions: [{ includeOpinionMining: true, modelVersion: "latest" }],
                                             recognizeEntitiesActions: [{ modelVersion: "latest" }]
                                         };
-                                        const poller = await textClient.beginAnalyzeActions([result.text], actions, "en");
+                                        const poller = await textClient.beginAnalyzeActions([text], actions, "en");
                                         poller.onProgress(() => {
                                             log(`Number of actions still in progress: ${poller.getOperationState().actionsInProgressCount}`);
                                         });
@@ -278,20 +292,33 @@ export class MeetaiBot extends DialogBot {
                                                         }
                                                         this.sendMeetingSummaryToOrganizer(ref, incidents.find(i => i.id === meeting.data.incident), meeting.id!, message);
                                                     } else {
-                                                        log("\tError:" + doc.error);
+                                                        log("Error:" + doc.error);
                                                     }
                                                 }
                                             } else {
                                                 log(chalk.red(extractSummaryAction.error));
                                             }
                                         }
+                                    };
+
+                                    recognizer.recognized = async (reco, e) => {
+                                        if (e && e.result && e.result.text) {
+                                            log(`RECOGNIZED: Text=${e.result.text}`);
+
+                                            text += e.result.text;
+                                        }
+                                    };
+
+                                    recognizer.startContinuousRecognitionAsync(() => {
+                                        log("Continous recognition started");
                                     });
+
                                 });
 
                                 // set up ffmpeg to extract audio
                                 command.input(path.resolve(__dirname, "temp.mp4"));
                                 command.audioChannels(1);
-                                // command.outputOptions(["-ss", "0", "-t", "180"]); // only take the first minute
+                                command.outputOptions(["-ss", "0", "-t", "60"]); // only take the first few minutes for the demo
                                 // command.audioCodec("pcm_u8");
                                 // command.audioQuality(12);
                                 command.format("wav");
